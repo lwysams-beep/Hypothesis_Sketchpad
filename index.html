@@ -1,0 +1,333 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>電路特工：假說畫板 v1.9</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: #f0f4f8;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            height: 100vh;
+            margin: 0;
+            overflow: hidden;
+            touch-action: none;
+        }
+
+        /* 頂部標題區 */
+        header {
+            margin-top: 10px;
+            text-align: center;
+        }
+        h2 { color: #2c3e50; margin: 5px 0; font-size: 1.4rem; }
+        .instructions { color: #555; font-size: 1rem; margin-bottom: 5px; }
+
+        /* 畫布容器 */
+        #canvas-container {
+            position: relative;
+            box-shadow: 0 8px 16px rgba(0,0,0,0.1);
+            border-radius: 12px;
+            border: 4px solid #3498db;
+            background: white;
+            margin: 10px;
+        }
+
+        canvas {
+            display: block;
+            touch-action: none;
+            cursor: crosshair;
+        }
+
+        /* 按鈕區 */
+        .controls { margin-top: 10px; display: flex; gap: 20px; }
+        
+        button {
+            padding: 12px 25px;
+            font-size: 1.1rem;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            font-weight: bold;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            transition: transform 0.1s;
+        }
+
+        .btn-clear { background-color: #95a5a6; color: white; }
+        .btn-submit { background-color: #3498db; color: white; }
+        button:active { transform: scale(0.95); }
+
+        /* 教師統計面板 (預設隱藏) */
+        #teacher-stats {
+            display: none;
+            width: 90%;
+            max-width: 500px;
+            background: white;
+            padding: 15px;
+            border-radius: 10px;
+            box-shadow: 0 -5px 20px rgba(0,0,0,0.1);
+            position: absolute;
+            bottom: 0;
+            z-index: 50;
+            border-top: 5px solid #2c3e50;
+        }
+
+        .stat-row {
+            display: flex;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .stat-label { width: 100px; font-size: 0.9rem; font-weight: bold; }
+        .stat-bar-bg { flex-grow: 1; background: #ecf0f1; height: 20px; border-radius: 10px; overflow: hidden; margin: 0 10px; }
+        .stat-bar-fill { height: 100%; transition: width 1s ease; }
+        .stat-value { width: 40px; text-align: right; font-size: 0.9rem; }
+
+        /* 學生回饋彈窗 */
+        #modal-overlay {
+            display: none;
+            position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+            background: rgba(0,0,0,0.5); z-index: 100;
+        }
+        #modal {
+            display: none;
+            position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%);
+            background: white; padding: 25px; border-radius: 15px;
+            text-align: center; width: 80%; max-width: 300px; z-index: 101;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+
+        /* 隱藏的教師開關 */
+        .teacher-toggle {
+            position: fixed; bottom: 10px; right: 10px;
+            opacity: 0.2; font-size: 1.5rem; cursor: pointer;
+        }
+    </style>
+</head>
+<body>
+
+    <header>
+        <h2>⚡ 特工假說記錄 ⚡</h2>
+        <div class="instructions">畫出你的電路設計圖，然後按提交！</div>
+    </header>
+
+    <div id="canvas-container">
+        <canvas id="circuitCanvas"></canvas>
+    </div>
+
+    <div class="controls">
+        <button class="btn-clear" onclick="clearCanvas()">重畫 🗑️</button>
+        <button class="btn-submit" onclick="submitHypothesis()">提交假說 🚀</button>
+    </div>
+
+    <div id="modal-overlay"></div>
+    <div id="modal">
+        <h3 id="modal-title" style="color:#2c3e50">記錄成功！</h3>
+        <p id="modal-msg" style="font-size:1.1rem; line-height:1.5;">系統已收到你的設計。</p>
+        <div style="background:#f9f9f9; padding:10px; border-radius:8px; margin:15px 0; font-size:0.9rem; color:#555;">
+            你的設計類型：<br><b id="modal-type" style="color:#3498db; font-size:1.2rem;">分析中...</b>
+        </div>
+        <p style="color:#e67e22; font-weight:bold;">下一步：請用實物驗證它！</p>
+        <button onclick="closeModal()" style="background:#2c3e50; color:white; margin-top:10px; font-size:1rem; padding:8px 20px;">收到</button>
+    </div>
+
+    <div class="teacher-toggle" onclick="toggleTeacherStats()">📊</div>
+
+    <div id="teacher-stats">
+        <div style="display:flex; justify-content:space-between; margin-bottom:10px;">
+            <strong>👨‍🏫 全班假說統計 (Teacher View)</strong>
+            <span onclick="toggleTeacherStats()" style="cursor:pointer">✖</span>
+        </div>
+        
+        <div class="stat-row">
+            <div class="stat-label">閉合迴路</div>
+            <div class="stat-bar-bg"><div id="bar-closed" class="stat-bar-fill" style="width:0%; background:#2ecc71;"></div></div>
+            <div id="val-closed" class="stat-value">0%</div>
+        </div>
+        <div class="stat-row">
+            <div class="stat-label">短路 (危險)</div>
+            <div class="stat-bar-bg"><div id="bar-short" class="stat-bar-fill" style="width:0%; background:#e74c3c;"></div></div>
+            <div id="val-short" class="stat-value">0%</div>
+        </div>
+        <div class="stat-row">
+            <div class="stat-label">單線/未接</div>
+            <div class="stat-bar-bg"><div id="bar-open" class="stat-bar-fill" style="width:0%; background:#f39c12;"></div></div>
+            <div id="val-open" class="stat-value">0%</div>
+        </div>
+        <div style="text-align:center; margin-top:10px; font-size:0.8rem; color:#7f8c8d;">
+            *此數據包含即時模擬數據以供觀課演示
+        </div>
+    </div>
+
+    <script>
+        // --- 1. Canvas 設定 ---
+        const canvas = document.getElementById('circuitCanvas');
+        const ctx = canvas.getContext('2d');
+        
+        // 適配螢幕
+        const w = Math.min(window.innerWidth * 0.95, 600);
+        const h = 350;
+        canvas.width = w;
+        canvas.height = h;
+
+        // 元件位置
+        const batteryPos = { x: 40, y: h/2 - 30, w: 80, h: 60 }; 
+        const bulbPos = { x: w - 120, y: h/2 - 40, w: 80, h: 80 }; 
+
+        let isDrawing = false;
+        let lastX = 0, lastY = 0;
+
+        // 模擬數據 (為了觀課時圖表好看，預設一些底數)
+        let stats = {
+            closed: 12, // 模擬已有 12 人畫對
+            short: 5,   // 模擬有 5 人短路
+            open: 8     // 模擬有 8 人斷路/單線
+        };
+
+        window.onload = function() {
+            drawComponents();
+            updateStatsUI(); // 初始化圖表
+        };
+
+        // --- 2. 繪圖核心 ---
+        function getPos(e) {
+            const rect = canvas.getBoundingClientRect();
+            const clientX = e.clientX || e.touches[0].clientX;
+            const clientY = e.clientY || e.touches[0].clientY;
+            return { x: clientX - rect.left, y: clientY - rect.top };
+        }
+
+        function start(e) {
+            isDrawing = true;
+            const pos = getPos(e);
+            lastX = pos.x; lastY = pos.y;
+            e.preventDefault();
+        }
+
+        function end() { isDrawing = false; ctx.beginPath(); }
+
+        function draw(e) {
+            if (!isDrawing) return;
+            const pos = getPos(e);
+            ctx.lineWidth = 6;
+            ctx.lineCap = 'round';
+            ctx.strokeStyle = '#e74c3c'; // 紅色電線
+            ctx.beginPath();
+            ctx.moveTo(lastX, lastY);
+            ctx.lineTo(pos.x, pos.y);
+            ctx.stroke();
+            lastX = pos.x; lastY = pos.y;
+            e.preventDefault();
+        }
+
+        canvas.addEventListener('mousedown', start);
+        canvas.addEventListener('mouseup', end);
+        canvas.addEventListener('mousemove', draw);
+        canvas.addEventListener('touchstart', start, {passive: false});
+        canvas.addEventListener('touchend', end);
+        canvas.addEventListener('touchmove', draw, {passive: false});
+
+        // --- 3. 畫元件 (無需圖片檔) ---
+        function drawComponents() {
+            // 電池
+            ctx.fillStyle = '#f1c40f'; ctx.fillRect(batteryPos.x, batteryPos.y, batteryPos.w, batteryPos.h);
+            ctx.fillStyle = '#333'; ctx.fillRect(batteryPos.x + batteryPos.w, batteryPos.y + 15, 10, 30);
+            ctx.font = 'bold 20px Arial'; ctx.fillStyle = '#000';
+            ctx.fillText("+", batteryPos.x + batteryPos.w - 15, batteryPos.y + 38);
+            ctx.fillText("-", batteryPos.x + 5, batteryPos.y + 38);
+            ctx.font = '14px Arial'; ctx.fillText("電池", batteryPos.x + 20, batteryPos.y + 80);
+
+            // 燈泡
+            const bx = bulbPos.x + 40, by = bulbPos.y + 30;
+            ctx.fillStyle = '#95a5a6'; ctx.fillRect(bx - 15, by + 25, 30, 20); // 底座
+            ctx.beginPath(); ctx.arc(bx, by, 30, 0, Math.PI * 2); // 玻璃泡
+            ctx.fillStyle = '#ecf0f1'; ctx.fill(); ctx.stroke();
+            ctx.fillStyle = '#000'; ctx.fillText("燈泡", bx - 15, by + 70);
+        }
+
+        function clearCanvas() {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            drawComponents();
+        }
+
+        // --- 4. 智能分類邏輯 (不給答案，只分類) ---
+        function checkZone(x, y, w, h) {
+            const data = ctx.getImageData(x, y, w, h).data;
+            for (let i = 0; i < data.length; i += 4) {
+                if (data[i] > 200 && data[i+1] < 100) return true; // 檢測紅色
+            }
+            return false;
+        }
+
+        function submitHypothesis() {
+            // 定義檢測區
+            const hasPos = checkZone(batteryPos.x + batteryPos.w, batteryPos.y, 20, 60);
+            const hasNeg = checkZone(batteryPos.x - 10, batteryPos.y, 20, 60);
+            const hasBulb = checkZone(bulbPos.x, bulbPos.y, bulbPos.w, bulbPos.h);
+            const hasDangerZone = checkZone(batteryPos.x, batteryPos.y - 50, canvas.width - 100, 40);
+
+            let type = "";
+            let typeLabel = "";
+
+            // 分類邏輯
+            if (hasPos && hasNeg && hasBulb) {
+                type = "closed";
+                typeLabel = "⭕ 閉合迴路模型";
+            } else if (hasPos && hasNeg && !hasBulb && hasDangerZone) {
+                type = "short";
+                typeLabel = "⚡ 極速捷徑模型 (短路)";
+            } else if ((hasPos && !hasNeg) || (!hasPos && hasNeg)) {
+                type = "open";
+                typeLabel = "📏 單線傳輸模型";
+            } else {
+                type = "open"; // 其他都歸類為斷路/未完成
+                typeLabel = "❓ 未完成 / 斷路模型";
+            }
+
+            // 更新數據 (模擬)
+            stats[type]++;
+            updateStatsUI();
+
+            // 顯示給學生 (中立回饋)
+            showModal(typeLabel);
+        }
+
+        // --- 5. UI 互動與統計 ---
+        function showModal(label) {
+            document.getElementById('modal-overlay').style.display = 'block';
+            document.getElementById('modal').style.display = 'block';
+            document.getElementById('modal-type').innerText = label;
+        }
+
+        function closeModal() {
+            document.getElementById('modal-overlay').style.display = 'none';
+            document.getElementById('modal').style.display = 'none';
+        }
+
+        function toggleTeacherStats() {
+            const panel = document.getElementById('teacher-stats');
+            panel.style.display = panel.style.display === 'block' ? 'none' : 'block';
+        }
+
+        function updateStatsUI() {
+            const total = stats.closed + stats.short + stats.open;
+            
+            // 計算百分比
+            const pClosed = Math.round((stats.closed / total) * 100) + "%";
+            const pShort = Math.round((stats.short / total) * 100) + "%";
+            const pOpen = Math.round((stats.open / total) * 100) + "%";
+
+            // 更新圖表寬度
+            document.getElementById('bar-closed').style.width = pClosed;
+            document.getElementById('bar-short').style.width = pShort;
+            document.getElementById('bar-open').style.width = pOpen;
+
+            // 更新數字
+            document.getElementById('val-closed').innerText = pClosed;
+            document.getElementById('val-short').innerText = pShort;
+            document.getElementById('val-open').innerText = pOpen;
+        }
+    </script>
+</body>
+</html>
