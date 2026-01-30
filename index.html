@@ -3,13 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>電路特工：雲端完成版 v4.6</title>
+    <title>電路特工：雲端修復版 v4.7</title>
     <!-- 
         Project: Circuit Hero (Class 4D Edition)
-        Version: 4.6 (UI Polish)
-        - Update: Removed Modal Title.
-        - UX: Button changes to "Upload Success" before resetting.
-        - Config: hypothesis-sketchpad
+        Version: 4.7 (UX & Connectivity Fix)
+        - UX: Submit button now shows "Uploading..." -> "Success" -> Resets after 5s.
+        - Fix: Distinct indicator for Cloud vs Local mode to prevent data loss confusion.
     -->
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f4f8; margin: 0; overflow: hidden; touch-action: none; }
@@ -37,7 +36,7 @@
         
         /* Loading & Success states for button */
         .btn-submit:disabled { background-color: #95a5a6; cursor: wait; transform: none; box-shadow: none; }
-        .btn-success { background-color: #2ecc71 !important; box-shadow: 0 4px 6px rgba(46, 204, 113, 0.4) !important; }
+        .btn-success { background-color: #2ecc71 !important; box-shadow: 0 4px 6px rgba(46, 204, 113, 0.4) !important; transform: scale(1.05); }
 
         /* Dashboard */
         #teacher-dashboard { width: 100%; height: 100%; background: #ecf0f1; overflow-y: auto; display: none; flex-direction: column; }
@@ -73,7 +72,7 @@
         @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
 
         /* Status Indicator */
-        #db-status { font-size: 0.8rem; margin-left: 10px; opacity: 0.8; }
+        #db-status { font-size: 0.9rem; margin-top: 15px; padding: 10px; border-radius: 8px; font-weight: bold; text-align: center;}
 
         /* Modals - Optimized for visibility */
         #modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 9998; }
@@ -84,8 +83,7 @@
             text-align: center; width: 85%; max-width: 320px; 
             z-index: 9999; box-shadow: 0 15px 50px rgba(0,0,0,0.3);
         }
-        /* Ensure newlines work in message */
-        #modal-msg { font-size: 1.1rem; white-space: pre-wrap; line-height: 1.6; color: #333; margin: 10px 0 20px 0; font-weight: 500; }
+        #modal-msg { font-size: 1.2rem; white-space: pre-wrap; line-height: 1.6; color: #2c3e50; margin: 10px 0 20px 0; font-weight: 600; }
         
         #img-modal { display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.9); flex-direction: column; align-items: center; justify-content: center; }
         .img-modal-content { margin: auto; display: block; max-width: 90%; max-height: 80%; border-radius: 5px; }
@@ -109,7 +107,8 @@
                 <input type="password" id="teacher-pwd" placeholder="密碼" style="padding:10px; width:80%; margin-bottom:10px; border:1px solid #ccc; border-radius:5px;">
                 <button onclick="loginTeacher()" style="padding:8px 20px; background:#2c3e50; color:white; border:none; border-radius:5px;">登入</button>
             </div>
-            <div id="db-status" style="margin-top:10px; font-size:0.8rem; color:#7f8c8d;">初始化中...</div>
+            <!-- Cloud Status Indicator -->
+            <div id="db-status" style="background:#eee; color:#7f8c8d;">正在連線到雲端...</div>
         </div>
     </div>
 
@@ -129,7 +128,7 @@
     <div id="page-teacher" class="page" style="display:none; height:100vh; overflow:hidden;">
         <div id="teacher-dashboard">
             <div class="dash-header">
-                <span>📊 4D班 探究數據 <span id="cloud-indicator" style="font-size:0.8rem;">(連線中...)</span></span>
+                <span>📊 4D班 探究數據 <span id="cloud-indicator" style="font-size:0.8rem;">...</span></span>
                 <div>
                     <button id="btn-reveal-toggle" class="btn-reveal" onclick="toggleRevealMode()">🔓 揭曉真相</button>
                     <button class="btn-reset" onclick="resetData()">🗑️ 重設</button>
@@ -167,7 +166,6 @@
     <!-- Modals -->
     <div id="modal-overlay"></div>
     <div id="modal">
-        <!-- Removed H3 Title -->
         <p id="modal-msg">內容</p>
         <button onclick="closeModal()" style="background:#2c3e50; color:white; padding:8px 30px; border-radius:20px; border:none; font-size:1.1rem; cursor:pointer; font-weight:bold;">收到</button>
     </div>
@@ -184,7 +182,7 @@
         import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot, writeBatch, query, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         // =======================================================
-        // ✅ USER FIREBASE CONFIG
+        // ✅ USER FIREBASE CONFIG (Configured for hypothesis-sketchpad)
         // =======================================================
         const firebaseConfig = {
             apiKey: "AIzaSyDOl7CQhE5-lkz6jME_UHViSIc7UmH939o",
@@ -203,12 +201,19 @@
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
                 console.log("Firebase initialized");
-                document.getElementById('db-status').innerText = "🟢 雲端連線就緒";
-                document.getElementById('db-status').style.color = "#2ecc71";
+                
+                // Update UI to show connection success
+                const statusEl = document.getElementById('db-status');
+                statusEl.innerText = "🟢 雲端連線成功 (資料會自動儲存)";
+                statusEl.style.backgroundColor = "#e8f8f5";
+                statusEl.style.color = "#27ae60";
             }
         } catch (e) {
             console.error("Firebase init failed:", e);
-            document.getElementById('db-status').innerText = "🔴 連線失敗";
+            const statusEl = document.getElementById('db-status');
+            statusEl.innerText = "🔴 連線失敗！將使用單機模式 (關閉後資料消失)";
+            statusEl.style.backgroundColor = "#fdedec";
+            statusEl.style.color = "#c0392b";
         }
 
         window.firebaseDB = db;
@@ -249,6 +254,7 @@
             
             hasSubmittedBefore = false;
             
+            // Check status in DB or Local
             if (window.firebaseDB) {
                 try {
                     const { doc, getDoc } = window.firestoreOps;
@@ -285,27 +291,32 @@
             } else { alert("密碼錯誤！"); }
         }
 
-        // === Submit Logic with "Uploading..." Feedback ===
+        // === Submit Logic with BUTTON FEEDBACK ===
         async function submitHypothesis() {
             const btn = document.getElementById('submit-btn');
+            const originalText = "提交設計 🚀";
             
-            // 1. Loading State (Feedback)
+            // 1. Loading State
             btn.innerText = "⏳ 正在上載...";
             btn.disabled = true;
+
+            // Wait a little bit to let user see "Uploading" (UX)
+            await new Promise(r => setTimeout(r, 800));
 
             try {
                 const res = analyzeCircuit(); 
                 const dataURL = canvas.toDataURL(); 
                 const record = { name: currentUser, type: res.type, img: dataURL, timestamp: Date.now() };
 
+                // Determine message
                 let msg = "";
-
                 if (hasSubmittedBefore) {
-                    msg = `✅ 更新成功！\n\n系統已收到你的更新。\n⚠️ 舊的設計已被新設計覆蓋。\n分類結果：【 ${res.type} 類 】`;
+                    msg = `✅ 更新成功！\n\n⚠️ 舊的設計已被新設計覆蓋。\n分類結果：【 ${res.type} 類 】`;
                 } else {
                     msg = `✅ 提交成功！\n\n系統已收到你的設計。\n分類結果：【 ${res.type} 類 】`;
                 }
 
+                // Upload Logic
                 if (window.firebaseDB) {
                     const { doc, setDoc } = window.firestoreOps;
                     await setDoc(doc(window.firebaseDB, "submissions", currentUser), record);
@@ -322,18 +333,18 @@
                 // 2. Success State on Button
                 btn.innerText = "✅ 上載成功！";
                 btn.classList.add('btn-success');
+                btn.disabled = false; // Enable again but keep success style temporarily
 
-                // 3. Reset Button after 2 seconds
+                // 3. Reset Button after 5 seconds (Requested by user)
                 setTimeout(() => {
-                    btn.innerText = "提交設計 🚀";
-                    btn.disabled = false;
+                    btn.innerText = originalText;
                     btn.classList.remove('btn-success');
-                }, 2000);
+                }, 5000);
 
             } catch (e) {
                 console.error(e);
-                alert("程式發生錯誤，請截圖通知老師。\n" + e.message);
-                btn.innerText = "提交設計 🚀";
+                alert("程式發生錯誤：" + e.message);
+                btn.innerText = originalText;
                 btn.disabled = false;
             }
         }
@@ -519,7 +530,6 @@
             const modal = document.getElementById('modal');
             overlay.style.display='block'; 
             modal.style.display='block'; 
-            // document.getElementById('modal-title').innerText=t; // REMOVED TITLE
             document.getElementById('modal-msg').innerText=m; 
         }
         function closeModal() { document.getElementById('modal-overlay').style.display='none'; document.getElementById('modal').style.display='none'; }
