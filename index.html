@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>電路特工：手動修正版 v3.4</title>
+    <title>電路特工：雲端探究版 v4.0</title>
     <!-- 
         Project: Circuit Hero (Class 4D Edition)
-        Version: 3.4
-        - Feature: Manual Classification Override for Teachers.
-        - Logic Fix: Expanded Insulator Zone + Absolute Priority for Class C if touching glass.
+        Version: 4.0 (Cloud Edition with Firebase)
+        - Update: Integrated Firestore for real-time sync between Student iPads and Teacher Dashboard.
+        - Fallback: If Firebase config is missing, it reverts to "Mock Data" mode for safety.
     -->
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f4f8; margin: 0; overflow: hidden; touch-action: none; }
@@ -45,7 +45,6 @@
         .stat-bar-bg { flex-grow: 1; background: #eee; height: 20px; border-radius: 10px; overflow: hidden; margin: 0 10px; }
         .stat-bar { height: 100%; transition: width 0.5s; }
         
-        /* Table with Override */
         .student-table { width: 100%; border-collapse: collapse; margin-top: 10px; font-size: 0.9rem; }
         .student-table th { text-align: left; border-bottom: 2px solid #ddd; padding: 8px; color: #7f8c8d; }
         .student-table td { border-bottom: 1px solid #eee; padding: 8px; vertical-align: middle; }
@@ -55,11 +54,10 @@
         .tag-B { background: #e74c3c; } 
         .tag-C { background: #f39c12; }
 
-        /* Override Select */
         .manual-select { padding: 5px; border-radius: 5px; border: 1px solid #ccc; font-size: 0.85rem; background: white; cursor: pointer; }
 
         .gallery-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(150px, 1fr)); gap: 15px; margin-top: 15px; }
-        .gallery-item { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.2s; }
+        .gallery-item { background: white; border-radius: 8px; overflow: hidden; box-shadow: 0 2px 5px rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.2s; position: relative;}
         .gallery-item:hover { transform: scale(1.05); border: 2px solid #3498db; }
         .gallery-img { width: 100%; height: 100px; object-fit: contain; background: #fff; border-bottom: 1px solid #eee; }
         .gallery-info { padding: 8px; font-size: 0.8rem; text-align: center; }
@@ -68,6 +66,9 @@
         .btn-reveal { background: #e67e22; border: none; color: white; padding: 8px 15px; border-radius: 20px; font-weight: bold; cursor: pointer; box-shadow: 0 2px 5px rgba(0,0,0,0.2); animation: pulse 2s infinite; }
         .btn-reset { background: #c0392b; border: none; color: white; padding: 8px 15px; border-radius: 20px; font-weight: bold; cursor: pointer; margin-left: 10px; }
         @keyframes pulse { 0% { transform: scale(1); } 50% { transform: scale(1.05); } 100% { transform: scale(1); } }
+
+        /* Status Indicator */
+        #db-status { font-size: 0.8rem; margin-left: 10px; opacity: 0.8; }
 
         /* Modals */
         #modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 100; }
@@ -81,14 +82,11 @@
 </head>
 <body>
 
-    <!-- 1. Login Page -->
     <div id="page-login" class="page active">
         <div class="login-card">
             <h2 style="margin-bottom:20px;">⚡ 電路特工登入</h2>
             <div id="student-login-area">
-                <select id="student-list">
-                    <option value="" disabled selected>請選擇你的名字...</option>
-                </select>
+                <select id="student-list"><option value="" disabled selected>請選擇你的名字...</option></select>
                 <button class="btn-role btn-student" onclick="loginStudent()">我是學生 🚀</button>
             </div>
             <hr style="margin: 20px 0; border: 0; border-top: 1px solid #eee;">
@@ -97,18 +95,16 @@
                 <input type="password" id="teacher-pwd" placeholder="密碼" style="padding:10px; width:80%; margin-bottom:10px; border:1px solid #ccc; border-radius:5px;">
                 <button onclick="loginTeacher()" style="padding:8px 20px; background:#2c3e50; color:white; border:none; border-radius:5px;">登入</button>
             </div>
+            <div id="db-status" style="margin-top:10px; font-size:0.8rem; color:#7f8c8d;">初始化中...</div>
         </div>
     </div>
 
-    <!-- 2. Student Canvas -->
     <div id="page-student" class="page">
         <header>
             <h2>⚡ 特工任務 (<span id="current-student-name"></span>)</h2>
-            <div class="instructions">請畫出電線，如何令燈泡亮起？</div>
+            <div class="instructions">請連接「電池座」與「燈座」的圓形接點！</div>
         </header>
-        <div id="canvas-container">
-            <canvas id="circuitCanvas"></canvas>
-        </div>
+        <div id="canvas-container"><canvas id="circuitCanvas"></canvas></div>
         <div class="controls">
             <button class="btn-action btn-clear" onclick="clearCanvas()">重畫 🗑️</button>
             <button class="btn-action btn-submit" onclick="submitHypothesis()">提交設計 🚀</button>
@@ -116,52 +112,37 @@
         <button onclick="logout()" style="margin-top:20px; background:none; border:none; color:#999; text-decoration:underline; cursor:pointer;">登出</button>
     </div>
 
-    <!-- 3. Teacher Dashboard -->
     <div id="page-teacher" class="page" style="display:none; height:100vh; overflow:hidden;">
         <div id="teacher-dashboard">
             <div class="dash-header">
-                <span>📊 4D班 探究數據</span>
+                <span>📊 4D班 探究數據 <span id="cloud-indicator" style="font-size:0.8rem;">(連線中...)</span></span>
                 <div>
                     <button id="btn-reveal-toggle" class="btn-reveal" onclick="toggleRevealMode()">🔓 揭曉真相</button>
-                    <button class="btn-reset" onclick="resetData()">🗑️ 重設數據</button>
+                    <button class="btn-reset" onclick="resetData()">🗑️ 重設</button>
                     <button onclick="logout()" style="background:rgba(255,255,255,0.2); color:white; border:none; padding:8px 15px; border-radius:20px; margin-left:10px;">登出</button>
                 </div>
             </div>
             <div class="dash-content">
                 <div class="stat-card">
-                    <h3>假說分類 (已交: <span id="submit-count">0</span>/30)</h3>
-                    <div class="stat-row">
-                        <div class="stat-label lbl-A">A 類設計</div>
-                        <div class="stat-bar-bg"><div id="t-bar-A" class="stat-bar" style="width:0%; background:#2ecc71;"></div></div>
-                        <div id="t-val-A" style="width:40px; text-align:right;">0%</div>
-                    </div>
-                    <div class="stat-row">
-                        <div class="stat-label lbl-B">B 類設計</div>
-                        <div class="stat-bar-bg"><div id="t-bar-B" class="stat-bar" style="width:0%; background:#e74c3c;"></div></div>
-                        <div id="t-val-B" style="width:40px; text-align:right;">0%</div>
-                    </div>
-                    <div class="stat-row">
-                        <div class="stat-label lbl-C">C 類設計</div>
-                        <div class="stat-bar-bg"><div id="t-bar-C" class="stat-bar" style="width:0%; background:#f39c12;"></div></div>
-                        <div id="t-val-C" style="width:40px; text-align:right;">0%</div>
-                    </div>
+                    <h3>假說分類 (已交: <span id="submit-count">0</span>)</h3>
+                    <div class="stat-row"><div class="stat-label lbl-A">A 類設計</div><div class="stat-bar-bg"><div id="t-bar-A" class="stat-bar" style="width:0%; background:#2ecc71;"></div></div><div id="t-val-A" style="width:40px; text-align:right;">0%</div></div>
+                    <div class="stat-row"><div class="stat-label lbl-B">B 類設計</div><div class="stat-bar-bg"><div id="t-bar-B" class="stat-bar" style="width:0%; background:#e74c3c;"></div></div><div id="t-val-B" style="width:40px; text-align:right;">0%</div></div>
+                    <div class="stat-row"><div class="stat-label lbl-C">C 類設計</div><div class="stat-bar-bg"><div id="t-bar-C" class="stat-bar" style="width:0%; background:#f39c12;"></div></div><div id="t-val-C" style="width:40px; text-align:right;">0%</div></div>
                 </div>
-
                 <div class="stat-card">
-                    <h3>🔎 設計圖畫廊 (點擊可放大)</h3>
+                    <h3>🔎 設計圖畫廊</h3>
                     <div style="margin-bottom:10px;">
                         <button onclick="renderGallery('all')">全部</button> 
-                        <button onclick="renderGallery('A')" style="color:#2ecc71; font-weight:bold;">A類</button> 
-                        <button onclick="renderGallery('B')" style="color:#e74c3c; font-weight:bold;">B類</button>
-                        <button onclick="renderGallery('C')" style="color:#f39c12; font-weight:bold;">C類</button>
+                        <button onclick="renderGallery('A')" style="color:#2ecc71;">A類</button> 
+                        <button onclick="renderGallery('B')" style="color:#e74c3c;">B類</button>
+                        <button onclick="renderGallery('C')" style="color:#f39c12;">C類</button>
                     </div>
                     <div id="gallery-container" class="gallery-grid"></div>
                 </div>
-
                 <div class="stat-card">
-                    <h3>📋 學生名單 (可手動修正)</h3>
+                    <h3>📋 學生名單 (手動修正)</h3>
                     <table class="student-table">
-                        <thead><tr><th>座號</th><th>姓名</th><th>系統判定</th><th>手動歸類</th></tr></thead>
+                        <thead><tr><th>姓名</th><th>系統判定</th><th>手動歸類</th></tr></thead>
                         <tbody id="student-table-body"></tbody>
                     </table>
                 </div>
@@ -169,7 +150,6 @@
         </div>
     </div>
 
-    <!-- Modals -->
     <div id="modal-overlay"></div>
     <div id="modal">
         <h3 id="modal-title" style="color:#2c3e50">標題</h3>
@@ -183,17 +163,59 @@
         <button class="btn-download" onclick="downloadImage()">📥 下載圖片</button>
     </div>
 
+    <!-- Firebase SDK Integration -->
+    <script type="module">
+        // 匯入 Firebase 模組
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+        import { getFirestore, collection, doc, setDoc, onSnapshot, writeBatch, query, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+        // =======================================================
+        // ⚠️ 請在這裡貼上您的 Firebase Config
+        // =======================================================
+        const firebaseConfig = {
+            // 請替換成您自己的設定！
+            apiKey: "AIzaSyDOl7CQhE5-lkz6jME_UHViSIc7UmH939o",
+            authDomain: "hypothesis-sketchpad.firebaseapp.com",
+            projectId: "hypothesis-sketchpad",
+            storageBucket: "hypothesis-sketchpad.firebasestorage.app",
+            messagingSenderId: "587015080414",
+            appId: "1:587015080414:web:870c797ed5a096b863f54f"
+        };
+        // =======================================================
+
+        let db = null;
+        
+        // 初始化 Firebase
+        try {
+            // 簡單檢查是否有填寫 Config (apiKey 長度通常 > 20)
+            if (firebaseConfig.apiKey && firebaseConfig.apiKey.length > 20 && firebaseConfig.apiKey !== "YOUR_API_KEY") {
+                const app = initializeApp(firebaseConfig);
+                db = getFirestore(app);
+                console.log("Firebase initialized successfully");
+                document.getElementById('db-status').innerText = "🟢 雲端連線就緒";
+                document.getElementById('db-status').style.color = "#2ecc71";
+            } else {
+                console.warn("No valid Firebase config found. Using Local Mock Mode.");
+                document.getElementById('db-status').innerText = "🟠 單機演示模式 (無雲端)";
+                document.getElementById('db-status').style.color = "#f39c12";
+            }
+        } catch (e) {
+            console.error("Firebase init failed:", e);
+            document.getElementById('db-status').innerText = "🔴 連線失敗 (請檢查 Config)";
+        }
+
+        // 把 DB 功能掛載到 window 以便傳統 JS 調用
+        window.firebaseDB = db;
+        window.firestoreOps = { collection, doc, setDoc, onSnapshot, writeBatch, query, getDocs };
+    </script>
+
     <script>
+        // === Main Logic ===
         let currentUser = "";
-        let submissions = [];
+        let submissions = []; // Local mirror of data
         let isRevealMode = false;
         const PASSWORD = "61513110";
-        const students = [
-            "1. 陳希兒", "2. 陳芯怡", "3. 陳煥一", "4. 鄭君亭", "5. 張峻謙",
-            "6. 周晴", "7. 周思潁", "8. 鍾熙雯", "9. 許健樂", "10. 梁津瑜",
-            "11. 李思語", "12. 劉宇軒", "13. 孟詩晴", "14. 潘芷瑩", "15. 潘裕翔",
-            "16. 曾柏森", "17. 曾子晴", "18. 王耀輝", "19. 黃煒喬", "20. 黃湙阩",
-            "21. 胡滙琦", "22. 熊永楓", "23. 朱彥銘"];
+        const students = ["1. 陳小明", "2. 李大文", "3. 張美玲", "4. 黃志強", "5. 何小儀", "6. 林國華", "7.吳嘉欣", "8. 葉天賜", "9. 梁凱晴", "10. 鄭俊傑", "11. 劉淑芬", "12. 羅偉文", "13. 謝婉婷", "14. 曾子謙", "15. 許樂", "16. 潘佩珊", "17. 鄧梓軒", "18. 蘇曉彤", "19. 馮家豪", "20. 蔡卓妍", "21. 郭富城", "22. 黎明", "23. 張學友", "24. 劉德華", "25. 楊千嬅", "26. 容祖兒", "27. 陳奕迅", "28. 古天樂", "29. 鄭秀文", "30. 王菲"];
 
         window.onload = function() { initStudentList(); drawComponents(); };
 
@@ -207,6 +229,7 @@
             if(pageId === 'page-teacher') document.getElementById('teacher-dashboard').style.display = 'flex';
         }
         function logout() { currentUser = ""; clearCanvas(); document.getElementById('teacher-pwd').value = ""; isRevealMode=false; showPage('page-login'); }
+        
         function loginStudent() {
             const name = document.getElementById('student-list').value;
             if(!name) { alert("請先選擇名字！"); return; }
@@ -217,23 +240,88 @@
         
         function loginTeacher() {
             if(document.getElementById('teacher-pwd').value === PASSWORD) {
-                if(submissions.length === 0 && !sessionStorage.getItem('resetHappened')) { generateMockData(); }
+                // If using Cloud, start listening
+                if (window.firebaseDB) {
+                    startRealtimeListener();
+                    document.getElementById('cloud-indicator').innerText = "(🟢 雲端同步中)";
+                    document.getElementById('cloud-indicator').style.color = "#2ecc71";
+                } else {
+                    // Fallback to Mock Data
+                    if(submissions.length === 0 && !sessionStorage.getItem('resetHappened')) { generateMockData(); }
+                    document.getElementById('cloud-indicator').innerText = "(🟠 單機演示模式)";
+                    document.getElementById('cloud-indicator').style.color = "#f39c12";
+                }
                 updateDashboard(); showPage('page-teacher');
             } else { alert("密碼錯誤！"); }
         }
 
-        function resetData() {
-            if(confirm("確定要重設所有數據嗎？")) {
-                submissions = []; sessionStorage.setItem('resetHappened', 'true'); updateDashboard(); alert("已重設。");
+        // === Cloud & Local Logic ===
+        
+        async function submitHypothesis() {
+            const res = analyzeCircuit(); // Get analysis result
+            const dataURL = canvas.toDataURL(); 
+            const record = { name: currentUser, type: res.type, img: dataURL, timestamp: Date.now() };
+
+            if (window.firebaseDB) {
+                // Write to Cloud
+                try {
+                    const { doc, setDoc, collection } = window.firestoreOps;
+                    // Use student name as ID to enforce uniqueness
+                    await setDoc(doc(window.firebaseDB, "submissions", currentUser), record);
+                    showModal("雲端上傳成功", `系統將你的設計分類為：【 ${res.type} 類 】\n請等待老師指示進行實驗！`);
+                } catch (e) {
+                    console.error(e);
+                    showModal("上傳失敗", "請檢查網路連線。");
+                }
+            } else {
+                // Local Mode
+                const idx = submissions.findIndex(s => s.name === currentUser);
+                if(idx >= 0) submissions.splice(idx, 1);
+                submissions.push(record);
+                showModal("記錄成功 (單機)", `系統將你的設計分類為：【 ${res.type} 類 】\n(注意：這是演示模式，老師電腦看不到)`);
             }
         }
 
-        // --- Manual Override Function ---
-        function overrideType(studentName, newType) {
+        function startRealtimeListener() {
+            if (!window.firebaseDB) return;
+            const { collection, onSnapshot, query } = window.firestoreOps;
+            const q = query(collection(window.firebaseDB, "submissions"));
+            onSnapshot(q, (snapshot) => {
+                submissions = [];
+                snapshot.forEach((doc) => {
+                    submissions.push(doc.data());
+                });
+                updateDashboard();
+            });
+        }
+
+        async function resetData() {
+            if(!confirm("確定要重設所有數據嗎？")) return;
+            
+            if (window.firebaseDB) {
+                // Cloud Delete
+                const { collection, getDocs, writeBatch, doc } = window.firestoreOps;
+                const batch = writeBatch(window.firebaseDB);
+                const snapshot = await getDocs(collection(window.firebaseDB, "submissions"));
+                snapshot.forEach((d) => { batch.delete(d.ref); });
+                await batch.commit();
+                alert("雲端數據已清空。");
+            } else {
+                // Local Delete
+                submissions = []; sessionStorage.setItem('resetHappened', 'true'); updateDashboard(); alert("單機數據已清空。");
+            }
+        }
+
+        async function overrideType(studentName, newType) {
+            // Find local to update UI immediately
             const entry = submissions.find(s => s.name === studentName);
-            if(entry) {
-                entry.type = newType;
-                updateDashboard(); // Refresh stats and gallery immediately
+            if(entry) { entry.type = newType; updateDashboard(); }
+
+            if (window.firebaseDB) {
+                // Update Cloud
+                const { doc, setDoc } = window.firestoreOps;
+                // Merge true allows updating only 'type' without overwriting image
+                await setDoc(doc(window.firebaseDB, "submissions", studentName), { type: newType }, { merge: true });
             }
         }
 
@@ -247,13 +335,12 @@
             });
         }
 
-        // === Canvas Setup ===
+        // === Canvas & Analysis Logic (v3.4) ===
         const canvas = document.getElementById('circuitCanvas');
         const ctx = canvas.getContext('2d');
         const w = Math.min(window.innerWidth * 0.95, 600);
         const h = 350;
         canvas.width = w; canvas.height = h;
-
         const batteryHolderPos = { x: 50, y: h/2 - 30, w: 100, h: 60 }; 
         const bulbPos = { x: w - 130, y: h/2 - 50, w: 80, h: 80 }; 
         let isDrawing = false, lastX = 0, lastY = 0;
@@ -294,21 +381,17 @@
             ctx.fillStyle = '#bdc3c7'; ctx.beginPath(); ctx.arc(lux - 35, holderY + 12.5, 8, 0, Math.PI*2); ctx.fill(); 
             ctx.beginPath(); ctx.arc(lux + 35, holderY + 12.5, 8, 0, Math.PI*2); ctx.fill(); 
             ctx.fillStyle = '#95a5a6'; ctx.fillRect(lux - 15, luy + 15, 30, 20);
-            
             ctx.beginPath(); ctx.arc(lux, luy, 30, 0, Math.PI * 2); ctx.fillStyle = '#fff176'; ctx.fill(); ctx.stroke();
             ctx.fillStyle = '#000'; ctx.fillText("燈座", lux - 15, holderY + 45);
         }
-
         function clearCanvas() { ctx.clearRect(0, 0, canvas.width, canvas.height); drawComponents(); }
-        
         function checkZone(x, y, w, h) {
             const data = ctx.getImageData(x, y, w, h).data;
             for (let i = 0; i < data.length; i += 4) { if (data[i] > 200 && data[i+1] < 100) return true; }
             return false;
         }
 
-        // === Logic v3.4 (Strict C Priority) ===
-        function submitHypothesis() {
+        function analyzeCircuit() {
             const bx = batteryHolderPos.x, by = batteryHolderPos.y, bw = batteryHolderPos.w;
             const hasBattPos = checkZone(bx + bw + 5, by, 30, 60);
             const hasBattNeg = checkZone(bx - 30, by, 30, 60);
@@ -316,48 +399,21 @@
             const holderY = bulbPos.y + 30 + 35;
             const hasBulbLeft = checkZone(lux - 45, holderY, 20, 25); 
             const hasBulbRight = checkZone(lux + 25, holderY, 20, 25);
-            
-            // Expanded Bulb Body Zone (Insulator Check)
-            // Center roughly at 520, 165. Radius ~30. Let's cover more area to be safe.
             const hasBulbBody = checkZone(bulbPos.x + 5, bulbPos.y + 5, 70, 50); 
-            
             const hasDangerZone = checkZone(bx, by - 60, bw + 40, 40);
 
             let type = "C"; 
-
-            if (!hasBattPos || !hasBattNeg) {
-                type = "C"; 
-            } else {
-                // Priority 1: Insulator Check (Glass Body) -> C Class (Highest Priority per feedback)
-                if (hasBulbBody) {
-                    type = "C"; 
-                } 
-                // Priority 2: Danger Zone (Short Circuit) -> B Class
-                else if (hasDangerZone) {
-                    type = "B"; 
-                }
-                // Priority 3: Same Terminal Short (B Class)
-                else if ((hasBulbLeft && !hasBulbRight) || (!hasBulbLeft && hasBulbRight)) {
-                    type = "B"; 
-                } 
-                // Priority 4: Success (A Class)
-                else if (hasBulbLeft && hasBulbRight) {
-                    type = "A"; 
-                } 
-                // Default
-                else {
-                    type = "C"; 
-                }
+            if (!hasBattPos || !hasBattNeg) { type = "C"; } else {
+                if (hasBulbBody) { type = "C"; } 
+                else if (hasDangerZone) { type = "B"; }
+                else if ((hasBulbLeft && !hasBulbRight) || (!hasBulbLeft && hasBulbRight)) { type = "B"; } 
+                else if (hasBulbLeft && hasBulbRight) { type = "A"; } 
+                else { type = "C"; }
             }
-
-            const dataURL = canvas.toDataURL(); 
-            const idx = submissions.findIndex(s => s.name === currentUser);
-            if(idx >= 0) submissions.splice(idx, 1);
-            submissions.push({ name: currentUser, type: type, img: dataURL });
-            showModal("記錄成功", `系統將你的設計分類為：【 ${type} 類 】\n請等待老師指示進行實驗！`);
+            return { type: type };
         }
 
-        // === Dashboard Logic (with Override) ===
+        // === Dashboard ===
         function toggleRevealMode() {
             isRevealMode = !isRevealMode;
             const btn = document.getElementById('btn-reveal-toggle');
@@ -365,58 +421,32 @@
             else { btn.innerText = "🔓 揭曉真相"; btn.style.background = "#e67e22"; }
             updateDashboard();
         }
-
         function getLabel(type) {
             if (!isRevealMode) return type + " 類設計";
             const map = { 'A': '⭕ A類 (閉合成功)', 'B': '⚡ B類 (短路危險)', 'C': '❓ C類 (斷路/錯誤)' };
             return map[type];
         }
-
         function updateDashboard() {
             let counts = { A: 0, B: 0, C: 0 };
             submissions.forEach(s => counts[s.type]++);
             const total = submissions.length;
             document.getElementById('submit-count').innerText = total;
             const safeTotal = total || 1; 
-
-            updateBar('t', counts.A, safeTotal, 'A');
-            updateBar('t', counts.B, safeTotal, 'B');
-            updateBar('t', counts.C, safeTotal, 'C');
+            updateBar('t', counts.A, safeTotal, 'A'); updateBar('t', counts.B, safeTotal, 'B'); updateBar('t', counts.C, safeTotal, 'C');
+            document.querySelector('.lbl-A').innerText = getLabel('A'); document.querySelector('.lbl-B').innerText = getLabel('B'); document.querySelector('.lbl-C').innerText = getLabel('C');
             
-            document.querySelector('.lbl-A').innerText = getLabel('A');
-            document.querySelector('.lbl-B').innerText = getLabel('B');
-            document.querySelector('.lbl-C').innerText = getLabel('C');
-
             const tbody = document.getElementById('student-table-body'); tbody.innerHTML = "";
             submissions.forEach(s => { 
-                // Create Dropdown for manual override
-                const selectHTML = `
-                    <select class="manual-select" onchange="overrideType('${s.name}', this.value)">
+                const selectHTML = `<select class="manual-select" onchange="overrideType('${s.name}', this.value)">
                         <option value="A" ${s.type==='A'?'selected':''}>A類</option>
                         <option value="B" ${s.type==='B'?'selected':''}>B類</option>
-                        <option value="C" ${s.type==='C'?'selected':''}>C類</option>
-                    </select>
-                `;
-                
-                tbody.innerHTML += `
-                    <tr>
-                        <td>${s.name.split('.')[0]}</td>
-                        <td>${s.name.split('.')[1]}</td>
-                        <td>${getTypeTag(s.type)}</td>
-                        <td>${selectHTML}</td>
-                    </tr>`; 
+                        <option value="C" ${s.type==='C'?'selected':''}>C類</option></select>`;
+                tbody.innerHTML += `<tr><td>${s.name}</td><td>${getTypeTag(s.type)}</td><td>${selectHTML}</td></tr>`; 
             });
             renderGallery('all');
         }
-
-        function updateBar(p, v, t, k) { 
-            const pct = (t === 0) ? "0%" : Math.round((v/t)*100)+"%"; 
-            document.getElementById(`${p}-bar-${k}`).style.width = pct; 
-            document.getElementById(`${p}-val-${k}`).innerText = pct; 
-        }
-        
+        function updateBar(p, v, t, k) { const pct = (t === 0) ? "0%" : Math.round((v/t)*100)+"%"; document.getElementById(`${p}-bar-${k}`).style.width = pct; document.getElementById(`${p}-val-${k}`).innerText = pct; }
         function getTypeTag(t) { const label = getLabel(t); const c = {'A':'tag-A', 'B':'tag-B', 'C':'tag-C'}; return `<span class="tag ${c[t]}">${label}</span>`; }
-        
         function renderGallery(f) {
             const c = document.getElementById('gallery-container'); c.innerHTML = "";
             const d = f === 'all' ? submissions : submissions.filter(s => s.type === f);
@@ -429,22 +459,10 @@
                 c.appendChild(item);
             });
         }
-
-        function openImgModal(src, name, type) {
-            document.getElementById('img-modal').style.display = "flex";
-            const img = document.getElementById('img-view');
-            img.src = src; img.dataset.name = name;
-            document.getElementById('img-caption').innerText = `${name} (${getLabel(type)})`;
-        }
+        function openImgModal(src, name, type) { document.getElementById('img-modal').style.display = "flex"; const img = document.getElementById('img-view'); img.src = src; img.dataset.name = name; document.getElementById('img-caption').innerText = `${name} (${getLabel(type)})`; }
         function closeImgModal() { document.getElementById('img-modal').style.display = "none"; }
-        function downloadImage() {
-            const img = document.getElementById('img-view');
-            const link = document.createElement('a');
-            link.download = `電路設計_${img.dataset.name}.png`;
-            link.href = img.src; document.body.appendChild(link); link.click(); document.body.removeChild(link);
-        }
+        function downloadImage() { const img = document.getElementById('img-view'); const link = document.createElement('a'); link.download = `電路設計_${img.dataset.name}.png`; link.href = img.src; document.body.appendChild(link); link.click(); document.body.removeChild(link); }
         window.onclick = function(event) { if (event.target == document.getElementById('img-modal')) closeImgModal(); }
-
         function showModal(t, m) { document.getElementById('modal-overlay').style.display='block'; document.getElementById('modal').style.display='block'; document.getElementById('modal-title').innerText=t; document.getElementById('modal-msg').innerText=m; }
         function closeModal() { document.getElementById('modal-overlay').style.display='none'; document.getElementById('modal').style.display='none'; }
     </script>
