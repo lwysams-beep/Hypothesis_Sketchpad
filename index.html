@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>電路特工：狀態檢查版 v4.1</title>
+    <title>電路特工：雲端正式版 v4.2</title>
     <!-- 
         Project: Circuit Hero (Class 4D Edition)
-        Version: 4.1
-        - Feature: Login Status Check (Checks if student has already submitted).
-        - Feedback: Explicit "Submission Successful" & "Overwrite" messages.
+        Version: 4.2 (Production with User Config)
+        - Config: Updated with user provided Firebase credentials.
+        - Logic: Smart feedback. First submission says "Success", subsequent says "Overwritten".
     -->
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f4f8; margin: 0; overflow: hidden; touch-action: none; }
@@ -165,15 +165,13 @@
 
     <!-- Firebase SDK Integration -->
     <script type="module">
-        // 匯入 Firebase 模組 - Added getDoc
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
         import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot, writeBatch, query, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         // =======================================================
-        // ⚠️ 請在這裡貼上您的 Firebase Config
+        // ✅ USER PROVIDED CONFIG
         // =======================================================
         const firebaseConfig = {
-            // 請替換成您自己的設定！
             apiKey: "AIzaSyDOl7CQhE5-lkz6jME_UHViSIc7UmH939o",
             authDomain: "hypothesis-sketchpad.firebaseapp.com",
             projectId: "hypothesis-sketchpad",
@@ -185,26 +183,19 @@
 
         let db = null;
         
-        // 初始化 Firebase
         try {
-            // 簡單檢查是否有填寫 Config (apiKey 長度通常 > 20)
-            if (firebaseConfig.apiKey && firebaseConfig.apiKey.length > 20 && firebaseConfig.apiKey !== "YOUR_API_KEY") {
+            if (firebaseConfig.apiKey) {
                 const app = initializeApp(firebaseConfig);
                 db = getFirestore(app);
-                console.log("Firebase initialized successfully");
+                console.log("Firebase initialized");
                 document.getElementById('db-status').innerText = "🟢 雲端連線就緒";
                 document.getElementById('db-status').style.color = "#2ecc71";
-            } else {
-                console.warn("No valid Firebase config found. Using Local Mock Mode.");
-                document.getElementById('db-status').innerText = "🟠 單機演示模式 (無雲端)";
-                document.getElementById('db-status').style.color = "#f39c12";
             }
         } catch (e) {
             console.error("Firebase init failed:", e);
-            document.getElementById('db-status').innerText = "🔴 連線失敗 (請檢查 Config)";
+            document.getElementById('db-status').innerText = "🔴 連線失敗";
         }
 
-        // 把 DB 功能掛載到 window 以便傳統 JS 調用 - Exposed getDoc
         window.firebaseDB = db;
         window.firestoreOps = { collection, doc, setDoc, getDoc, onSnapshot, writeBatch, query, getDocs };
     </script>
@@ -212,7 +203,8 @@
     <script>
         // === Main Logic ===
         let currentUser = "";
-        let submissions = []; // Local mirror of data
+        let hasSubmittedBefore = false; // Track locally for session
+        let submissions = [];
         let isRevealMode = false;
         const PASSWORD = "61513110";
         const students = [
@@ -233,31 +225,29 @@
             const p = document.getElementById(pageId); p.classList.add('active'); p.style.display = 'flex';
             if(pageId === 'page-teacher') document.getElementById('teacher-dashboard').style.display = 'flex';
         }
-        function logout() { currentUser = ""; clearCanvas(); document.getElementById('teacher-pwd').value = ""; isRevealMode=false; showPage('page-login'); }
+        function logout() { currentUser = ""; hasSubmittedBefore = false; clearCanvas(); document.getElementById('teacher-pwd').value = ""; isRevealMode=false; showPage('page-login'); }
         
-        // --- 登入邏輯 Update v4.1 ---
+        // --- 登入邏輯 (Check Status) ---
         async function loginStudent() {
             const name = document.getElementById('student-list').value;
             if(!name) { alert("請先選擇名字！"); return; }
             currentUser = name; document.getElementById('current-student-name').innerText = name; 
             
-            // 狀態檢查
-            let alreadySubmitted = false;
+            // Reset state
+            hasSubmittedBefore = false;
             
             if (window.firebaseDB) {
-                // Cloud Check
                 try {
                     const { doc, getDoc } = window.firestoreOps;
                     const docRef = doc(window.firebaseDB, "submissions", name);
                     const docSnap = await getDoc(docRef);
-                    if (docSnap.exists()) alreadySubmitted = true;
+                    if (docSnap.exists()) hasSubmittedBefore = true;
                 } catch(e) { console.error("Login check fail", e); }
             } else {
-                // Local Check
-                if(submissions.find(s => s.name === name)) alreadySubmitted = true;
+                if(submissions.find(s => s.name === name)) hasSubmittedBefore = true;
             }
 
-            if(alreadySubmitted) {
+            if(hasSubmittedBefore) {
                 showModal("已提交狀態", "你之前已經提交過設計。\n您可以重新繪畫並提交，新設計將會覆蓋舊的記錄。");
             }
 
@@ -282,29 +272,37 @@
             } else { alert("密碼錯誤！"); }
         }
 
-        // === Cloud & Local Logic ===
-        
+        // === Logic: Smart Feedback Message ===
         async function submitHypothesis() {
             const res = analyzeCircuit(); 
             const dataURL = canvas.toDataURL(); 
             const record = { name: currentUser, type: res.type, img: dataURL, timestamp: Date.now() };
 
+            // Determine Message Type
+            let title = "✅ 提交成功";
+            let msg = `系統已收到你的設計。\n分類結果：【 ${res.type} 類 】`;
+            
+            if(hasSubmittedBefore) {
+                title = "✅ 更新成功";
+                msg = `舊的設計已被覆蓋。\n最新分類：【 ${res.type} 類 】`;
+            }
+
             if (window.firebaseDB) {
-                // Write to Cloud
                 try {
                     const { doc, setDoc } = window.firestoreOps;
                     await setDoc(doc(window.firebaseDB, "submissions", currentUser), record);
-                    showModal("✅ 提交成功", `系統已更新你的設計圖 (舊的已被覆蓋)。\n分類結果：【 ${res.type} 類 】`);
+                    showModal(title, msg);
+                    hasSubmittedBefore = true; // Mark as submitted for next time
                 } catch (e) {
                     console.error(e);
                     showModal("❌ 上傳失敗", "請檢查網路連線。");
                 }
             } else {
-                // Local Mode
                 const idx = submissions.findIndex(s => s.name === currentUser);
                 if(idx >= 0) submissions.splice(idx, 1);
                 submissions.push(record);
-                showModal("✅ 提交成功 (單機)", `系統已更新你的設計圖 (舊的已被覆蓋)。\n分類結果：【 ${res.type} 類 】`);
+                showModal(title + " (單機)", msg);
+                hasSubmittedBefore = true;
             }
         }
 
