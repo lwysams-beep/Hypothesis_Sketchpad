@@ -3,12 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>電路特工：雲端正式版 v4.2</title>
+    <title>電路特工：雲端穩定版 v4.4</title>
     <!-- 
         Project: Circuit Hero (Class 4D Edition)
-        Version: 4.2 (Production with User Config)
-        - Config: Updated with user provided Firebase credentials.
-        - Logic: Smart feedback. First submission says "Success", subsequent says "Overwritten".
+        Version: 4.4 (Stability & Message Fix)
+        - UX: Smart Message Logic (First vs Update).
+        - Stability: Try-Catch wrapper to ensure Modals ALWAYS pop up.
+        - CSS: Fixed newline display in modals.
     -->
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f4f8; margin: 0; overflow: hidden; touch-action: none; }
@@ -70,10 +71,19 @@
         /* Status Indicator */
         #db-status { font-size: 0.8rem; margin-left: 10px; opacity: 0.8; }
 
-        /* Modals */
-        #modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 100; }
-        #modal { display: none; position: fixed; top: 50%; left: 50%; transform: translate(-50%, -50%); background: white; padding: 25px; border-radius: 15px; text-align: center; width: 80%; max-width: 300px; z-index: 101; box-shadow: 0 10px 30px rgba(0,0,0,0.2); }
-        #img-modal { display: none; position: fixed; z-index: 200; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.9); flex-direction: column; align-items: center; justify-content: center; }
+        /* Modals - Optimized for visibility */
+        #modal-overlay { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.5); z-index: 9998; }
+        #modal { 
+            display: none; position: fixed; top: 50%; left: 50%; 
+            transform: translate(-50%, -50%); 
+            background: white; padding: 25px; border-radius: 15px; 
+            text-align: center; width: 85%; max-width: 320px; 
+            z-index: 9999; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+        }
+        /* Ensure newlines work in message */
+        #modal-msg { font-size: 1.1rem; white-space: pre-wrap; line-height: 1.5; color: #555; margin: 15px 0; }
+        
+        #img-modal { display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.9); flex-direction: column; align-items: center; justify-content: center; }
         .img-modal-content { margin: auto; display: block; max-width: 90%; max-height: 80%; border-radius: 5px; }
         #img-caption { margin: 15px 0; color: #ccc; font-size: 1.2rem; text-align: center; }
         .close-img { position: absolute; top: 15px; right: 35px; color: #f1f1f1; font-size: 40px; font-weight: bold; cursor: pointer; }
@@ -150,11 +160,12 @@
         </div>
     </div>
 
+    <!-- Modals -->
     <div id="modal-overlay"></div>
     <div id="modal">
         <h3 id="modal-title" style="color:#2c3e50">標題</h3>
-        <p id="modal-msg" style="font-size:1.1rem;">內容</p>
-        <button onclick="closeModal()" style="background:#2c3e50; color:white; padding:8px 20px; border-radius:20px; border:none;">收到</button>
+        <p id="modal-msg">內容</p>
+        <button onclick="closeModal()" style="background:#2c3e50; color:white; padding:8px 25px; border-radius:20px; border:none; font-size:1rem; cursor:pointer;">收到</button>
     </div>
     <div id="img-modal">
         <span class="close-img" onclick="closeImgModal()">&times;</span>
@@ -169,7 +180,7 @@
         import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot, writeBatch, query, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         // =======================================================
-        // ✅ USER PROVIDED CONFIG
+        // ✅ USER FIREBASE CONFIG (Configured for hypothesis-sketchpad)
         // =======================================================
         const firebaseConfig = {
             apiKey: "AIzaSyDOl7CQhE5-lkz6jME_UHViSIc7UmH939o",
@@ -203,12 +214,11 @@
     <script>
         // === Main Logic ===
         let currentUser = "";
-        let hasSubmittedBefore = false; // Track locally for session
+        let hasSubmittedBefore = false; // Session tracking
         let submissions = [];
         let isRevealMode = false;
         const PASSWORD = "61513110";
-        const students = [
-            "1. 陳希兒", "2. 陳芯怡", "3. 陳煥一", "4. 鄭君亭", "5. 張峻謙",
+        const students = [            "1. 陳希兒", "2. 陳芯怡", "3. 陳煥一", "4. 鄭君亭", "5. 張峻謙",
             "6. 周晴", "7. 周思潁", "8. 鍾熙雯", "9. 許健樂", "10. 梁津瑜",
             "11. 李思語", "12. 劉宇軒", "13. 孟詩晴", "14. 潘芷瑩", "15. 潘裕翔", 
             "16. 曾柏森", "17. 曾子晴", "18. 王耀輝", "19. 黃煒喬", "20. 黃湙阩",
@@ -227,13 +237,12 @@
         }
         function logout() { currentUser = ""; hasSubmittedBefore = false; clearCanvas(); document.getElementById('teacher-pwd').value = ""; isRevealMode=false; showPage('page-login'); }
         
-        // --- 登入邏輯 (Check Status) ---
+        // --- Login Logic ---
         async function loginStudent() {
             const name = document.getElementById('student-list').value;
             if(!name) { alert("請先選擇名字！"); return; }
             currentUser = name; document.getElementById('current-student-name').innerText = name; 
             
-            // Reset state
             hasSubmittedBefore = false;
             
             if (window.firebaseDB) {
@@ -242,7 +251,7 @@
                     const docRef = doc(window.firebaseDB, "submissions", name);
                     const docSnap = await getDoc(docRef);
                     if (docSnap.exists()) hasSubmittedBefore = true;
-                } catch(e) { console.error("Login check fail", e); }
+                } catch(e) { console.error("Check status failed", e); }
             } else {
                 if(submissions.find(s => s.name === name)) hasSubmittedBefore = true;
             }
@@ -272,37 +281,40 @@
             } else { alert("密碼錯誤！"); }
         }
 
-        // === Logic: Smart Feedback Message ===
+        // === Submit Logic (Safe Wrap) ===
         async function submitHypothesis() {
-            const res = analyzeCircuit(); 
-            const dataURL = canvas.toDataURL(); 
-            const record = { name: currentUser, type: res.type, img: dataURL, timestamp: Date.now() };
+            try {
+                const res = analyzeCircuit(); 
+                const dataURL = canvas.toDataURL(); 
+                const record = { name: currentUser, type: res.type, img: dataURL, timestamp: Date.now() };
 
-            // Determine Message Type
-            let title = "✅ 提交成功";
-            let msg = `系統已收到你的設計。\n分類結果：【 ${res.type} 類 】`;
-            
-            if(hasSubmittedBefore) {
-                title = "✅ 更新成功";
-                msg = `舊的設計已被覆蓋。\n最新分類：【 ${res.type} 類 】`;
-            }
+                // Message Logic (Strict Separation)
+                let title = "";
+                let msg = "";
 
-            if (window.firebaseDB) {
-                try {
+                if (hasSubmittedBefore) {
+                    title = "✅ 更新成功！";
+                    msg = `系統已收到你的更新。\n⚠️ 舊的設計已被新設計覆蓋。\n\n最新分類結果：【 ${res.type} 類 】`;
+                } else {
+                    title = "✅ 提交成功！";
+                    msg = `系統已收到你的設計。\n\n分類結果：【 ${res.type} 類 】`;
+                }
+
+                if (window.firebaseDB) {
                     const { doc, setDoc } = window.firestoreOps;
                     await setDoc(doc(window.firebaseDB, "submissions", currentUser), record);
                     showModal(title, msg);
-                    hasSubmittedBefore = true; // Mark as submitted for next time
-                } catch (e) {
-                    console.error(e);
-                    showModal("❌ 上傳失敗", "請檢查網路連線。");
+                    hasSubmittedBefore = true; // Mark submitted
+                } else {
+                    const idx = submissions.findIndex(s => s.name === currentUser);
+                    if(idx >= 0) submissions.splice(idx, 1);
+                    submissions.push(record);
+                    showModal(title + " (單機)", msg);
+                    hasSubmittedBefore = true;
                 }
-            } else {
-                const idx = submissions.findIndex(s => s.name === currentUser);
-                if(idx >= 0) submissions.splice(idx, 1);
-                submissions.push(record);
-                showModal(title + " (單機)", msg);
-                hasSubmittedBefore = true;
+            } catch (e) {
+                console.error(e);
+                alert("程式發生錯誤，請截圖通知老師。\n" + e.message);
             }
         }
 
@@ -352,7 +364,7 @@
             });
         }
 
-        // === Canvas & Analysis Logic (v3.4) ===
+        // === Canvas Logic ===
         const canvas = document.getElementById('circuitCanvas');
         const ctx = canvas.getContext('2d');
         const w = Math.min(window.innerWidth * 0.95, 600);
@@ -480,7 +492,16 @@
         function closeImgModal() { document.getElementById('img-modal').style.display = "none"; }
         function downloadImage() { const img = document.getElementById('img-view'); const link = document.createElement('a'); link.download = `電路設計_${img.dataset.name}.png`; link.href = img.src; document.body.appendChild(link); link.click(); document.body.removeChild(link); }
         window.onclick = function(event) { if (event.target == document.getElementById('img-modal')) closeImgModal(); }
-        function showModal(t, m) { document.getElementById('modal-overlay').style.display='block'; document.getElementById('modal').style.display='block'; document.getElementById('modal-title').innerText=t; document.getElementById('modal-msg').innerText=m; }
+        
+        // --- Show Modal Function (Robust) ---
+        function showModal(t, m) { 
+            const overlay = document.getElementById('modal-overlay');
+            const modal = document.getElementById('modal');
+            overlay.style.display='block'; 
+            modal.style.display='block'; 
+            document.getElementById('modal-title').innerText=t; 
+            document.getElementById('modal-msg').innerText=m; 
+        }
         function closeModal() { document.getElementById('modal-overlay').style.display='none'; document.getElementById('modal').style.display='none'; }
     </script>
 </body>
