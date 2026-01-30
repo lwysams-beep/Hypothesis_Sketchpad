@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>電路特工：雲端上載版 v4.5</title>
+    <title>電路特工：雲端完成版 v4.6</title>
     <!-- 
         Project: Circuit Hero (Class 4D Edition)
-        Version: 4.5 (Upload Feedback)
-        - UX Fix: Added "Uploading..." state to submit button to prevent "no reaction" feeling.
-        - Text Update: Changed success message to "上載成功".
+        Version: 4.6 (UI Polish)
+        - Update: Removed Modal Title.
+        - UX: Button changes to "Upload Success" before resetting.
         - Config: hypothesis-sketchpad
     -->
     <style>
@@ -31,12 +31,13 @@
         #canvas-container { position: relative; box-shadow: 0 8px 16px rgba(0,0,0,0.1); border-radius: 12px; border: 4px solid #3498db; background: white; margin: 10px; }
         canvas { display: block; cursor: crosshair; }
         .controls { margin-top: 10px; display: flex; gap: 20px; }
-        .btn-action { padding: 12px 25px; font-size: 1.1rem; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: 0.2s; }
+        .btn-action { padding: 12px 25px; font-size: 1.1rem; border: none; border-radius: 50px; cursor: pointer; font-weight: bold; color: white; box-shadow: 0 4px 6px rgba(0,0,0,0.1); transition: all 0.3s; }
         .btn-clear { background-color: #95a5a6; }
         .btn-submit { background-color: #3498db; }
         
-        /* Loading state for button */
+        /* Loading & Success states for button */
         .btn-submit:disabled { background-color: #95a5a6; cursor: wait; transform: none; box-shadow: none; }
+        .btn-success { background-color: #2ecc71 !important; box-shadow: 0 4px 6px rgba(46, 204, 113, 0.4) !important; }
 
         /* Dashboard */
         #teacher-dashboard { width: 100%; height: 100%; background: #ecf0f1; overflow-y: auto; display: none; flex-direction: column; }
@@ -79,12 +80,12 @@
         #modal { 
             display: none; position: fixed; top: 50%; left: 50%; 
             transform: translate(-50%, -50%); 
-            background: white; padding: 25px; border-radius: 15px; 
+            background: white; padding: 30px; border-radius: 15px; 
             text-align: center; width: 85%; max-width: 320px; 
-            z-index: 9999; box-shadow: 0 10px 40px rgba(0,0,0,0.3);
+            z-index: 9999; box-shadow: 0 15px 50px rgba(0,0,0,0.3);
         }
         /* Ensure newlines work in message */
-        #modal-msg { font-size: 1.1rem; white-space: pre-wrap; line-height: 1.5; color: #555; margin: 15px 0; }
+        #modal-msg { font-size: 1.1rem; white-space: pre-wrap; line-height: 1.6; color: #333; margin: 10px 0 20px 0; font-weight: 500; }
         
         #img-modal { display: none; position: fixed; z-index: 10000; left: 0; top: 0; width: 100%; height: 100%; overflow: auto; background-color: rgba(0,0,0,0.9); flex-direction: column; align-items: center; justify-content: center; }
         .img-modal-content { margin: auto; display: block; max-width: 90%; max-height: 80%; border-radius: 5px; }
@@ -166,9 +167,9 @@
     <!-- Modals -->
     <div id="modal-overlay"></div>
     <div id="modal">
-        <h3 id="modal-title" style="color:#2c3e50">標題</h3>
+        <!-- Removed H3 Title -->
         <p id="modal-msg">內容</p>
-        <button onclick="closeModal()" style="background:#2c3e50; color:white; padding:8px 25px; border-radius:20px; border:none; font-size:1rem; cursor:pointer;">收到</button>
+        <button onclick="closeModal()" style="background:#2c3e50; color:white; padding:8px 30px; border-radius:20px; border:none; font-size:1.1rem; cursor:pointer; font-weight:bold;">收到</button>
     </div>
     <div id="img-modal">
         <span class="close-img" onclick="closeImgModal()">&times;</span>
@@ -183,7 +184,7 @@
         import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot, writeBatch, query, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         // =======================================================
-        // ✅ USER FIREBASE CONFIG (Configured for hypothesis-sketchpad)
+        // ✅ USER FIREBASE CONFIG
         // =======================================================
         const firebaseConfig = {
             apiKey: "AIzaSyDOl7CQhE5-lkz6jME_UHViSIc7UmH939o",
@@ -260,7 +261,7 @@
             }
 
             if(hasSubmittedBefore) {
-                showModal("已提交狀態", "你之前已經提交過設計。\n您可以重新繪畫並提交，新設計將會覆蓋舊的記錄。");
+                showModal("你之前已經提交過設計。\n您可以重新繪畫並提交，新設計將會覆蓋舊的記錄。");
             }
 
             showPage('page-student');
@@ -287,9 +288,8 @@
         // === Submit Logic with "Uploading..." Feedback ===
         async function submitHypothesis() {
             const btn = document.getElementById('submit-btn');
-            const originalText = btn.innerText;
             
-            // 1. Loading State
+            // 1. Loading State (Feedback)
             btn.innerText = "⏳ 正在上載...";
             btn.disabled = true;
 
@@ -298,36 +298,42 @@
                 const dataURL = canvas.toDataURL(); 
                 const record = { name: currentUser, type: res.type, img: dataURL, timestamp: Date.now() };
 
-                // Message Logic (Strict Separation)
-                let title = "";
                 let msg = "";
 
                 if (hasSubmittedBefore) {
-                    title = "✅ 更新成功！";
-                    msg = `系統已收到你的更新。\n⚠️ 舊的設計已被新設計覆蓋。\n\n最新分類結果：【 ${res.type} 類 】`;
+                    msg = `✅ 更新成功！\n\n系統已收到你的更新。\n⚠️ 舊的設計已被新設計覆蓋。\n分類結果：【 ${res.type} 類 】`;
                 } else {
-                    title = "✅ 上載成功！"; // User requested "上載成功"
-                    msg = `系統已收到你的設計。\n\n分類結果：【 ${res.type} 類 】`;
+                    msg = `✅ 提交成功！\n\n系統已收到你的設計。\n分類結果：【 ${res.type} 類 】`;
                 }
 
                 if (window.firebaseDB) {
                     const { doc, setDoc } = window.firestoreOps;
                     await setDoc(doc(window.firebaseDB, "submissions", currentUser), record);
-                    showModal(title, msg);
+                    showModal(msg);
                     hasSubmittedBefore = true; 
                 } else {
                     const idx = submissions.findIndex(s => s.name === currentUser);
                     if(idx >= 0) submissions.splice(idx, 1);
                     submissions.push(record);
-                    showModal(title + " (單機)", msg);
+                    showModal(msg + " (單機)");
                     hasSubmittedBefore = true;
                 }
+
+                // 2. Success State on Button
+                btn.innerText = "✅ 上載成功！";
+                btn.classList.add('btn-success');
+
+                // 3. Reset Button after 2 seconds
+                setTimeout(() => {
+                    btn.innerText = "提交設計 🚀";
+                    btn.disabled = false;
+                    btn.classList.remove('btn-success');
+                }, 2000);
+
             } catch (e) {
                 console.error(e);
                 alert("程式發生錯誤，請截圖通知老師。\n" + e.message);
-            } finally {
-                // Reset Button
-                btn.innerText = originalText;
+                btn.innerText = "提交設計 🚀";
                 btn.disabled = false;
             }
         }
@@ -507,13 +513,13 @@
         function downloadImage() { const img = document.getElementById('img-view'); const link = document.createElement('a'); link.download = `電路設計_${img.dataset.name}.png`; link.href = img.src; document.body.appendChild(link); link.click(); document.body.removeChild(link); }
         window.onclick = function(event) { if (event.target == document.getElementById('img-modal')) closeImgModal(); }
         
-        // --- Show Modal Function (Robust) ---
-        function showModal(t, m) { 
+        // --- Show Modal Function ---
+        function showModal(m) { 
             const overlay = document.getElementById('modal-overlay');
             const modal = document.getElementById('modal');
             overlay.style.display='block'; 
             modal.style.display='block'; 
-            document.getElementById('modal-title').innerText=t; 
+            // document.getElementById('modal-title').innerText=t; // REMOVED TITLE
             document.getElementById('modal-msg').innerText=m; 
         }
         function closeModal() { document.getElementById('modal-overlay').style.display='none'; document.getElementById('modal').style.display='none'; }
