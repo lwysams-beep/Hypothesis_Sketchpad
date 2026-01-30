@@ -3,12 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <title>電路特工：雲端探究版 v4.0</title>
+    <title>電路特工：狀態檢查版 v4.1</title>
     <!-- 
         Project: Circuit Hero (Class 4D Edition)
-        Version: 4.0 (Cloud Edition with Firebase)
-        - Update: Integrated Firestore for real-time sync between Student iPads and Teacher Dashboard.
-        - Fallback: If Firebase config is missing, it reverts to "Mock Data" mode for safety.
+        Version: 4.1
+        - Feature: Login Status Check (Checks if student has already submitted).
+        - Feedback: Explicit "Submission Successful" & "Overwrite" messages.
     -->
     <style>
         body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; background-color: #f0f4f8; margin: 0; overflow: hidden; touch-action: none; }
@@ -165,9 +165,9 @@
 
     <!-- Firebase SDK Integration -->
     <script type="module">
-        // 匯入 Firebase 模組
+        // 匯入 Firebase 模組 - Added getDoc
         import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-        import { getFirestore, collection, doc, setDoc, onSnapshot, writeBatch, query, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+        import { getFirestore, collection, doc, setDoc, getDoc, onSnapshot, writeBatch, query, getDocs } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
 
         // =======================================================
         // ⚠️ 請在這裡貼上您的 Firebase Config
@@ -204,9 +204,9 @@
             document.getElementById('db-status').innerText = "🔴 連線失敗 (請檢查 Config)";
         }
 
-        // 把 DB 功能掛載到 window 以便傳統 JS 調用
+        // 把 DB 功能掛載到 window 以便傳統 JS 調用 - Exposed getDoc
         window.firebaseDB = db;
-        window.firestoreOps = { collection, doc, setDoc, onSnapshot, writeBatch, query, getDocs };
+        window.firestoreOps = { collection, doc, setDoc, getDoc, onSnapshot, writeBatch, query, getDocs };
     </script>
 
     <script>
@@ -235,23 +235,45 @@
         }
         function logout() { currentUser = ""; clearCanvas(); document.getElementById('teacher-pwd').value = ""; isRevealMode=false; showPage('page-login'); }
         
-        function loginStudent() {
+        // --- 登入邏輯 Update v4.1 ---
+        async function loginStudent() {
             const name = document.getElementById('student-list').value;
             if(!name) { alert("請先選擇名字！"); return; }
-            currentUser = name; document.getElementById('current-student-name').innerText = name; showPage('page-student');
+            currentUser = name; document.getElementById('current-student-name').innerText = name; 
+            
+            // 狀態檢查
+            let alreadySubmitted = false;
+            
+            if (window.firebaseDB) {
+                // Cloud Check
+                try {
+                    const { doc, getDoc } = window.firestoreOps;
+                    const docRef = doc(window.firebaseDB, "submissions", name);
+                    const docSnap = await getDoc(docRef);
+                    if (docSnap.exists()) alreadySubmitted = true;
+                } catch(e) { console.error("Login check fail", e); }
+            } else {
+                // Local Check
+                if(submissions.find(s => s.name === name)) alreadySubmitted = true;
+            }
+
+            if(alreadySubmitted) {
+                showModal("已提交狀態", "你之前已經提交過設計。\n您可以重新繪畫並提交，新設計將會覆蓋舊的記錄。");
+            }
+
+            showPage('page-student');
             setTimeout(drawComponents, 100);
         }
+
         function toggleTeacherInput() { const div = document.getElementById('teacher-input-area'); div.style.display = div.style.display === 'none' ? 'block' : 'none'; }
         
         function loginTeacher() {
             if(document.getElementById('teacher-pwd').value === PASSWORD) {
-                // If using Cloud, start listening
                 if (window.firebaseDB) {
                     startRealtimeListener();
                     document.getElementById('cloud-indicator').innerText = "(🟢 雲端同步中)";
                     document.getElementById('cloud-indicator').style.color = "#2ecc71";
                 } else {
-                    // Fallback to Mock Data
                     if(submissions.length === 0 && !sessionStorage.getItem('resetHappened')) { generateMockData(); }
                     document.getElementById('cloud-indicator').innerText = "(🟠 單機演示模式)";
                     document.getElementById('cloud-indicator').style.color = "#f39c12";
@@ -263,27 +285,26 @@
         // === Cloud & Local Logic ===
         
         async function submitHypothesis() {
-            const res = analyzeCircuit(); // Get analysis result
+            const res = analyzeCircuit(); 
             const dataURL = canvas.toDataURL(); 
             const record = { name: currentUser, type: res.type, img: dataURL, timestamp: Date.now() };
 
             if (window.firebaseDB) {
                 // Write to Cloud
                 try {
-                    const { doc, setDoc, collection } = window.firestoreOps;
-                    // Use student name as ID to enforce uniqueness
+                    const { doc, setDoc } = window.firestoreOps;
                     await setDoc(doc(window.firebaseDB, "submissions", currentUser), record);
-                    showModal("雲端上傳成功", `系統將你的設計分類為：【 ${res.type} 類 】\n請等待老師指示進行實驗！`);
+                    showModal("✅ 提交成功", `系統已更新你的設計圖 (舊的已被覆蓋)。\n分類結果：【 ${res.type} 類 】`);
                 } catch (e) {
                     console.error(e);
-                    showModal("上傳失敗", "請檢查網路連線。");
+                    showModal("❌ 上傳失敗", "請檢查網路連線。");
                 }
             } else {
                 // Local Mode
                 const idx = submissions.findIndex(s => s.name === currentUser);
                 if(idx >= 0) submissions.splice(idx, 1);
                 submissions.push(record);
-                showModal("記錄成功 (單機)", `系統將你的設計分類為：【 ${res.type} 類 】\n(注意：這是演示模式，老師電腦看不到)`);
+                showModal("✅ 提交成功 (單機)", `系統已更新你的設計圖 (舊的已被覆蓋)。\n分類結果：【 ${res.type} 類 】`);
             }
         }
 
@@ -302,30 +323,23 @@
 
         async function resetData() {
             if(!confirm("確定要重設所有數據嗎？")) return;
-            
             if (window.firebaseDB) {
-                // Cloud Delete
-                const { collection, getDocs, writeBatch, doc } = window.firestoreOps;
+                const { collection, getDocs, writeBatch } = window.firestoreOps;
                 const batch = writeBatch(window.firebaseDB);
                 const snapshot = await getDocs(collection(window.firebaseDB, "submissions"));
                 snapshot.forEach((d) => { batch.delete(d.ref); });
                 await batch.commit();
                 alert("雲端數據已清空。");
             } else {
-                // Local Delete
                 submissions = []; sessionStorage.setItem('resetHappened', 'true'); updateDashboard(); alert("單機數據已清空。");
             }
         }
 
         async function overrideType(studentName, newType) {
-            // Find local to update UI immediately
             const entry = submissions.find(s => s.name === studentName);
             if(entry) { entry.type = newType; updateDashboard(); }
-
             if (window.firebaseDB) {
-                // Update Cloud
                 const { doc, setDoc } = window.firestoreOps;
-                // Merge true allows updating only 'type' without overwriting image
                 await setDoc(doc(window.firebaseDB, "submissions", studentName), { type: newType }, { merge: true });
             }
         }
